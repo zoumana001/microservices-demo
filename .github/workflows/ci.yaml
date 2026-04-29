@@ -53,22 +53,12 @@ jobs:
         uses: gitleaks/gitleaks-action@v2
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}   # only needed for orgs
-        with:
-          args: >-
-            detect
-            --source .
-            --redact
-            --exit-code 1
-            --report-format sarif
-            --report-path gitleaks-report.sarif
-            --log-level warn
 
-      - name: Upload Gitleaks SARIF to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@v3
+      - name: Upload Gitleaks SARIF
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
-          sarif_file: gitleaks-report.sarif
+          sarif_file: results.sarif
           category: gitleaks
 
   # ═══════════════════════════════════════════════════════════════
@@ -89,57 +79,63 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Run Checkov on Terraform
+        id: checkov-tf
         uses: bridgecrewio/checkov-action@v12
         with:
           directory: terraform/
           framework: terraform
-          output_format: sarif
-          output_file_path: checkov-terraform.sarif
-          soft_fail: false          # fail on HIGH/CRITICAL
-          skip_check: >-
-            CKV_TF_1,
-            CKV2_AWS_12
-          # CKV_TF_1:   module source pinning — acceptable for portfolio
-          # CKV2_AWS_12: VPC flow logs — not needed for this lab
+          output_format: cli,sarif        # cli for logs, sarif for upload
+          output_file_path: console,checkov-terraform.sarif
+          soft_fail: true                 # write the file even if checks fail
 
       - name: Run Checkov on Kubernetes manifests
+        id: checkov-k8s
         uses: bridgecrewio/checkov-action@v12
         with:
           directory: manifests/
           framework: kubernetes
-          output_format: sarif
-          output_file_path: checkov-k8s.sarif
-          soft_fail: false
+          output_format: cli,sarif
+          output_file_path: console,checkov-k8s.sarif
+          soft_fail: true
 
       - name: Run Checkov on Dockerfile
+        id: checkov-docker
         uses: bridgecrewio/checkov-action@v12
         with:
-          file: Dockerfile
+          file: src/frontend/Dockerfile   # correct path for your structure
           framework: dockerfile
-          output_format: sarif
-          output_file_path: checkov-docker.sarif
-          soft_fail: false
+          output_format: cli,sarif
+          output_file_path: console,checkov-docker.sarif
+          soft_fail: true
 
       - name: Upload Checkov SARIF — Terraform
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: checkov-terraform.sarif
           category: checkov-terraform
 
       - name: Upload Checkov SARIF — Kubernetes
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: checkov-k8s.sarif
           category: checkov-kubernetes
 
       - name: Upload Checkov SARIF — Dockerfile
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: checkov-docker.sarif
           category: checkov-dockerfile
+
+      # Now fail the job if Checkov found CRITICAL/HIGH issues
+      - name: Fail if Checkov found issues
+        if: |
+          steps.checkov-tf.outputs.results == 'failed' ||
+          steps.checkov-k8s.outputs.results == 'failed' ||
+          steps.checkov-docker.outputs.results == 'failed'
+        run: exit 1
 
   # ═══════════════════════════════════════════════════════════════
   # STAGE 3 — SonarQube: code quality and SAST
@@ -152,45 +148,37 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      pull-requests: write   # to post inline PR comments
+      pull-requests: write
 
     steps:
       - name: Checkout source
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0   # required for SonarQube blame analysis
+          fetch-depth: 0
 
-      - name: Set up Go (for test coverage report)
+      - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
 
-      - name: Run tests and generate coverage report
+      - name: Generate test coverage
         run: |
           cd src/frontend
-          go test ./... -coverprofile=coverage.out -covermode=atomic
-        continue-on-error: true   # don't fail if no tests exist yet
+          go test ./... -coverprofile=../../coverage.out -covermode=atomic
+        continue-on-error: true
 
-      - name: Run SonarQube scan
+      - name: SonarCloud scan
         uses: SonarSource/sonarqube-scan-action@v2
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN:    ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
-        with:
-          args: >-
-            -Dsonar.projectKey=zoumana001
-            -Dsonar.projectName="Zoum Boutique Frontend"
-            -Dsonar.sources=src/
-            -Dsonar.go.coverage.reportPaths=src/frontend/coverage.out
-            -Dsonar.qualitygate.wait=true
+        # NO args here — everything comes from sonar-project.properties
 
-      # Quality Gate check — fails the pipeline if SonarQube
-      # determines the code doesn't meet your quality standards
-      - name: SonarQube Quality Gate check
+      - name: SonarCloud Quality Gate
         uses: SonarSource/sonarqube-quality-gate-action@v1
         timeout-minutes: 5
         env:
-          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_TOKEN:    ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
 
   # ═══════════════════════════════════════════════════════════════
@@ -311,14 +299,14 @@ jobs:
           ignore-unfixed: true
 
       - name: Upload Trivy vulnerability SARIF
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: trivy-vuln.sarif
           category:   trivy-vulnerabilities
 
       - name: Upload Trivy secret SARIF
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         if: always()
         with:
           sarif_file: trivy-secret.sarif
