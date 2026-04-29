@@ -7,7 +7,7 @@ RUN apk add --no-cache git ca-certificates gcc musl-dev
 
 WORKDIR /app
 
-# Copy the entire frontend source first
+# Copy the entire frontend source firs
 # (Online Boutique frontend has its go.mod her
 COPY . . 
 
