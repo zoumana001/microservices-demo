@@ -8,8 +8,8 @@ RUN apk add --no-cache git ca-certificates gcc musl-dev
 WORKDIR /app
 
 # Copy the entire frontend source first
-# (Online Boutique frontend has its go.mod here)
-COPY . .
+# (Online Boutique frontend has its go.mod her
+COPY . . 
 
 # Download dependencies
 RUN go mod download
@@ -22,7 +22,7 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
     .
 
 # ─────────────────────────────────────────────
-# Stage 2 — Runtime
+# Stage 2 — Runtime  
 # ─────────────────────────────────────────────
 FROM gcr.io/distroless/base-debian12:nonroot
 

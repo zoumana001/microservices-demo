@@ -16,7 +16,7 @@ env:
   MANIFESTS_REPO: zoumana001/gitops-manifests
 
 # ─────────────────────────────────────────────────────────────────
-# PIPELINE OVERVIEW
+# PIPELINE OVERVIEW 
 #
 #  Stage 1 — SECRET SCAN        (Gitleaks)         runs on raw code
 #  Stage 2 — IaC SCAN           (Checkov)          runs on raw code
@@ -25,7 +25,7 @@ env:
 #  Stage 5 — IMAGE SCAN         (Trivy)            scans the built image
 #  Stage 6 — PUSH               (GHCR)             only if image scan passes
 #  Stage 7 — UPDATE MANIFESTS   (git commit)       only on main branch
-#  Stage 8 — NOTIFY             (Slack)            always runs
+#  Stage 8 — NOTIFY             (Slack)            always run
 # ─────────────────────────────────────────────────────────────────
 
 jobs:
@@ -263,7 +263,7 @@ jobs:
       # Full vulnerability scan — fails on CRITICAL/HIGH
       - name: Trivy — vulnerability scan (SARIF)
         uses: aquasecurity/trivy-action@master
-        with:
+        with: 
           image-ref:      ${{ needs.build.outputs.full-image }}
           format:         sarif
           output:         trivy-vuln.sarif
