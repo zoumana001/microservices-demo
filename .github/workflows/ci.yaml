@@ -67,7 +67,7 @@ jobs:
   # GitHub Actions workflows for misconfigurations and
   # compliance violations (CIS, NIST, SOC2 benchmarks).
   # ═══════════════════════════════════════════════════════════════
- checkov:
+  checkov:
     name: IaC scan (Checkov)
     runs-on: ubuntu-latest
     permissions:
@@ -78,38 +78,35 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Install Checkov
-        run: pip install checkov --quiet
-
       - name: Run Checkov on Terraform
-        run: |
-          checkov -d terraform/ \
-            --framework terraform \
-            --output sarif \
-            --output-file checkov-terraform.sarif \
-            --soft-fail
-        continue-on-error: true
+        id: checkov-tf
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: terraform/
+          framework: terraform
+          output_format: cli,sarif        # cli for logs, sarif for upload
+          output_file_path: console,checkov-terraform.sarif
+          soft_fail: true                 # write the file even if checks fail
 
       - name: Run Checkov on Kubernetes manifests
-        run: |
-          checkov -d manifests/ \
-            --framework kubernetes \
-            --output sarif \
-            --output-file checkov-k8s.sarif \
-            --soft-fail
-        continue-on-error: true
+        id: checkov-k8s
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: manifests/
+          framework: kubernetes
+          output_format: cli,sarif
+          output_file_path: console,checkov-k8s.sarif
+          soft_fail: true
 
       - name: Run Checkov on Dockerfile
-        run: |
-          checkov -f src/frontend/Dockerfile \
-            --framework dockerfile \
-            --output sarif \
-            --output-file checkov-docker.sarif \
-            --soft-fail
-        continue-on-error: true
-
-      - name: Confirm SARIF files exist
-        run: ls -la checkov-*.sarif
+        id: checkov-docker
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          file: src/frontend/Dockerfile   # correct path for your structur
+          framework: dockerfile
+          output_format: cli,sarif
+          output_file_path: console,checkov-docker.sarif
+          soft_fail: true
 
       - name: Upload Checkov SARIF — Terraform
         uses: github/codeql-action/upload-sarif@v4
@@ -131,6 +128,14 @@ jobs:
         with:
           sarif_file: checkov-docker.sarif
           category: checkov-dockerfile
+
+      # Now fail the job if Checkov found CRITICAL/HIGH issues
+      - name: Fail if Checkov found issues
+        if: |
+          steps.checkov-tf.outputs.results == 'failed' ||
+          steps.checkov-k8s.outputs.results == 'failed' ||
+          steps.checkov-docker.outputs.results == 'failed'
+        run: exit 1
 
   # ═══════════════════════════════════════════════════════════════
   # STAGE 3 — SonarQube: code quality and SAST
