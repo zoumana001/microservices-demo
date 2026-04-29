@@ -102,7 +102,7 @@ jobs:
         id: checkov-docker
         uses: bridgecrewio/checkov-action@v12
         with:
-          file: src/frontend/Dockerfile   # correct path for your structure
+          file: src/frontend/Dockerfile   # correct path for your structur
           framework: dockerfile
           output_format: cli,sarif
           output_file_path: console,checkov-docker.sarif
