@@ -67,7 +67,7 @@ jobs:
   # GitHub Actions workflows for misconfigurations and
   # compliance violations (CIS, NIST, SOC2 benchmarks).
   # ═══════════════════════════════════════════════════════════════
-  checkov:
+ checkov:
     name: IaC scan (Checkov)
     runs-on: ubuntu-latest
     permissions:
