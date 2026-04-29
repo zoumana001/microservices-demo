@@ -1,0 +1,8 @@
+# .trivyignore
+# CVEs accepted after review — add justification for each entry.
+# Keep this list short and review it monthly.
+
+# Example format:
+# CVE-YYYY-NNNNN   exp:YYYY-MM-DD   # Justification: no fix available, monitored
+
+# CVE-2023-44487  exp:2024-12-31    # HTTP/2 rapid reset — mitigated at LB layer

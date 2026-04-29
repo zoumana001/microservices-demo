@@ -1,0 +1,490 @@
+name: CI — Security Scan, Build, Image Scan, Push, Update Manifests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'Dockerfile'
+      - '.github/workflows/ci.yaml'
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY:     ghcr.io
+  IMAGE_NAME:   ${{ github.repository_owner }}/boutique-frontend
+  MANIFESTS_REPO: zoumana001/gitops-manifests
+
+# ─────────────────────────────────────────────────────────────────
+# PIPELINE OVERVIEW
+#
+#  Stage 1 — SECRET SCAN        (Gitleaks)         runs on raw code
+#  Stage 2 — IaC SCAN           (Checkov)          runs on raw code
+#  Stage 3 — CODE QUALITY       (SonarQube)        runs on raw code
+#  Stage 4 — BUILD              (Docker Buildx)    only if 1+2+3 pass
+#  Stage 5 — IMAGE SCAN         (Trivy)            scans the built image
+#  Stage 6 — PUSH               (GHCR)             only if image scan passes
+#  Stage 7 — UPDATE MANIFESTS   (git commit)       only on main branch
+#  Stage 8 — NOTIFY             (Slack)            always runs
+# ─────────────────────────────────────────────────────────────────
+
+jobs:
+
+  # ═══════════════════════════════════════════════════════════════
+  # STAGE 1 — Gitleaks: detect secrets committed to the repo
+  # Scans every commit in the push for hardcoded credentials,
+  # API keys, tokens, private keys, connection strings, etc.
+  # Runs BEFORE anything else — a leaked secret stops the pipeline.
+  # ═══════════════════════════════════════════════════════════════
+  gitleaks:
+    name: Secret scan (Gitleaks)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so Gitleaks can scan all commits
+
+      - name: Run Gitleaks secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_LICENSE: ${{ secrets.GITLEAKS_LICENSE }}   # only needed for orgs
+        with:
+          args: >-
+            detect
+            --source .
+            --redact
+            --exit-code 1
+            --report-format sarif
+            --report-path gitleaks-report.sarif
+            --log-level warn
+
+      - name: Upload Gitleaks SARIF to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: gitleaks-report.sarif
+          category: gitleaks
+
+  # ═══════════════════════════════════════════════════════════════
+  # STAGE 2 — Checkov: static analysis of IaC files
+  # Scans Terraform, Kubernetes YAML, Dockerfiles, and
+  # GitHub Actions workflows for misconfigurations and
+  # compliance violations (CIS, NIST, SOC2 benchmarks).
+  # ═══════════════════════════════════════════════════════════════
+  checkov:
+    name: IaC scan (Checkov)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Run Checkov on Terraform
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: terraform/
+          framework: terraform
+          output_format: sarif
+          output_file_path: checkov-terraform.sarif
+          soft_fail: false          # fail on HIGH/CRITICAL
+          skip_check: >-
+            CKV_TF_1,
+            CKV2_AWS_12
+          # CKV_TF_1:   module source pinning — acceptable for portfolio
+          # CKV2_AWS_12: VPC flow logs — not needed for this lab
+
+      - name: Run Checkov on Kubernetes manifests
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          directory: manifests/
+          framework: kubernetes
+          output_format: sarif
+          output_file_path: checkov-k8s.sarif
+          soft_fail: false
+
+      - name: Run Checkov on Dockerfile
+        uses: bridgecrewio/checkov-action@v12
+        with:
+          file: Dockerfile
+          framework: dockerfile
+          output_format: sarif
+          output_file_path: checkov-docker.sarif
+          soft_fail: false
+
+      - name: Upload Checkov SARIF — Terraform
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-terraform.sarif
+          category: checkov-terraform
+
+      - name: Upload Checkov SARIF — Kubernetes
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-k8s.sarif
+          category: checkov-kubernetes
+
+      - name: Upload Checkov SARIF — Dockerfile
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: checkov-docker.sarif
+          category: checkov-dockerfile
+
+  # ═══════════════════════════════════════════════════════════════
+  # STAGE 3 — SonarQube: code quality and SAST
+  # Scans application source code for bugs, code smells,
+  # security vulnerabilities (OWASP), duplications, and
+  # test coverage. Requires a SonarQube server or SonarCloud.
+  # ═══════════════════════════════════════════════════════════════
+  sonarqube:
+    name: Code quality (SonarQube)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write   # to post inline PR comments
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # required for SonarQube blame analysis
+
+      - name: Set up Go (for test coverage report)
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Run tests and generate coverage report
+        run: |
+          cd src/frontend
+          go test ./... -coverprofile=coverage.out -covermode=atomic
+        continue-on-error: true   # don't fail if no tests exist yet
+
+      - name: Run SonarQube scan
+        uses: SonarSource/sonarqube-scan-action@v2
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: >-
+            -Dsonar.projectKey=zoumana001
+            -Dsonar.projectName="Zoum Boutique Frontend"
+            -Dsonar.sources=src/
+            -Dsonar.go.coverage.reportPaths=src/frontend/coverage.out
+            -Dsonar.qualitygate.wait=true
+
+      # Quality Gate check — fails the pipeline if SonarQube
+      # determines the code doesn't meet your quality standards
+      - name: SonarQube Quality Gate check
+        uses: SonarSource/sonarqube-quality-gate-action@v1
+        timeout-minutes: 5
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+
+  # ═══════════════════════════════════════════════════════════════
+  # STAGE 4 — Build Docker image
+  # Only runs if Gitleaks + Checkov + SonarQube all passed.
+  # Uses Docker Buildx with GitHub Actions cache for fast rebuilds.
+  # ═══════════════════════════════════════════════════════════════
+  build:
+    name: Build image
+    runs-on: ubuntu-latest
+    needs: [gitleaks, checkov, sonarqube]
+    permissions:
+      contents: read
+      packages: write
+      security-events: write
+
+    outputs:
+      image-tag:    ${{ steps.meta.outputs.version }}
+      image-digest: ${{ steps.push.outputs.digest }}
+      full-image:   ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${{ steps.meta.outputs.version }}
+
+    steps:
+      - name: Checkout source
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      # Tags: ghcr.io/owner/boutique-frontend:main-abc1234
+      #       ghcr.io/owner/boutique-frontend:latest
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=sha,prefix=${{ github.ref_name }}-,format=short
+            type=raw,value=latest,enable=${{ github.ref_name == 'main' }}
+
+      - name: Build and push image to GHCR
+        id: push
+        uses: docker/build-push-action@v5
+        with:
+          context: ./src/frontend
+          file: ./src/frontend/Dockerfile
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          platforms: linux/amd64
+          provenance: true    # generate SLSA provenance attestation
+          sbom: true          # generate SBOM (Software Bill of Materials)
+
+  # ═══════════════════════════════════════════════════════════════
+  # STAGE 5 — Trivy: container image vulnerability scan
+  # Scans the BUILT image (not just the Dockerfile) for:
+  #   - OS package CVEs (Alpine, Debian, Ubuntu)
+  #   - Application dependency CVEs (Go modules, npm, pip)
+  #   - Misconfigurations in the image layer
+  #   - Exposed secrets baked into layers
+  # Blocks the pipeline on CRITICAL/HIGH unfixed CVEs.
+  # ═══════════════════════════════════════════════════════════════
+  trivy:
+    name: Image scan (Trivy)
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GHCR_TOKEN }}
+
+      # Full vulnerability scan — fails on CRITICAL/HIGH
+      - name: Trivy — vulnerability scan (SARIF)
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref:      ${{ needs.build.outputs.full-image }}
+          format:         sarif
+          output:         trivy-vuln.sarif
+          severity:       CRITICAL,HIGH
+          exit-code:      '1'
+          ignore-unfixed: true
+          vuln-type:      os,library
+
+      # Also scan for secrets baked into image layers
+      - name: Trivy — secret scan inside image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref:  ${{ needs.build.outputs.full-image }}
+          format:     sarif
+          output:     trivy-secret.sarif
+          scanners:   secret
+          exit-code:  '1'
+
+      # Human-readable table in the Actions log
+      - name: Trivy — table output for logs
+        uses: aquasecurity/trivy-action@master
+        if: always()
+        with:
+          image-ref:      ${{ needs.build.outputs.full-image }}
+          format:         table
+          severity:       CRITICAL,HIGH
+          ignore-unfixed: true
+
+      - name: Upload Trivy vulnerability SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-vuln.sarif
+          category:   trivy-vulnerabilities
+
+      - name: Upload Trivy secret SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-secret.sarif
+          category:   trivy-secrets
+
+  # ═══════════════════════════════════════════════════════════════
+  # STAGE 6 + 7 — Update manifests repo
+  # Only runs on main branch after ALL security scans pass.
+  # Uses sed to update the image tag in deployment.yaml,
+  # then commits and pushes to gitops-manifests repo.
+  # This commit triggers ArgoCD to sync the new image.
+  # ═══════════════════════════════════════════════════════════════
+  update-manifests:
+    name: Update manifests
+    runs-on: ubuntu-latest
+    needs: [build, trivy]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout manifests repo
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.MANIFESTS_REPO }}
+          token:      ${{ secrets.MANIFESTS_REPO_TOKEN }}
+          path:       manifests
+
+      - name: Update image tag in deployment.yaml
+        env:
+          NEW_TAG: ${{ needs.build.outputs.image-tag }}
+        run: |
+          cd manifests
+
+          sed -i \
+            "s|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:.*|image: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:${NEW_TAG}|g" \
+            apps/boutique-app/deployment.yaml
+
+          echo "Updated image tag to: ${NEW_TAG}"
+          git diff
+
+      - name: Commit and push
+        env:
+          NEW_TAG: ${{ needs.build.outputs.image-tag }}
+        run: |
+          cd manifests
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add apps/boutique-app/deployment.yaml
+
+          git diff --staged --quiet || git commit -m \
+            "ci: update frontend image to ${NEW_TAG}
+
+            Source commit : ${{ github.sha }}
+            Triggered by  : ${{ github.event.head_commit.message }}
+            Gitleaks      : passed
+            Checkov       : passed
+            SonarQube     : passed (Quality Gate)
+            Trivy         : passed (no CRITICAL/HIGH CVEs)
+            Run           : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+
+          git push
+
+  # ═══════════════════════════════════════════════════════════════
+  # STAGE 8 — Slack notification
+  # Always runs regardless of pipeline outcome.
+  # Posts a rich Slack message with per-job status,
+  # image tag, commit message, and link to the run.
+  # ═══════════════════════════════════════════════════════════════
+  notify:
+    name: Slack notification
+    runs-on: ubuntu-latest
+    needs: [gitleaks, checkov, sonarqube, build, trivy, update-manifests]
+    if: always()
+
+    steps:
+      - name: Build status summary
+        id: summary
+        run: |
+          gitleaks="${{ needs.gitleaks.result }}"
+          checkov="${{ needs.checkov.result }}"
+          sonar="${{ needs.sonarqube.result }}"
+          build="${{ needs.build.result }}"
+          trivy="${{ needs.trivy.result }}"
+          manifests="${{ needs.update-manifests.result }}"
+
+          icon() { [ "$1" = "success" ] && echo ":white_check_mark:" || echo ":x:"; }
+
+          echo "gitleaks_icon=$(icon $gitleaks)"      >> $GITHUB_OUTPUT
+          echo "checkov_icon=$(icon $checkov)"        >> $GITHUB_OUTPUT
+          echo "sonar_icon=$(icon $sonar)"            >> $GITHUB_OUTPUT
+          echo "build_icon=$(icon $build)"            >> $GITHUB_OUTPUT
+          echo "trivy_icon=$(icon $trivy)"            >> $GITHUB_OUTPUT
+          echo "manifests_icon=$(icon $manifests)"    >> $GITHUB_OUTPUT
+
+          if [ "$gitleaks" = "success" ] && [ "$checkov" = "success" ] && \
+             [ "$sonar" = "success" ]   && [ "$build" = "success" ]   && \
+             [ "$trivy" = "success" ]   && [ "$manifests" = "success" ]; then
+            echo "overall=:rocket: All checks passed — deploying" >> $GITHUB_OUTPUT
+          else
+            echo "overall=:fire: Pipeline failed — deployment blocked" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Post to Slack
+        uses: slackapi/slack-github-action@v1.26.0
+        with:
+          payload: |
+            {
+              "blocks": [
+                {
+                  "type": "header",
+                  "text": {
+                    "type": "plain_text",
+                    "text": "CI Pipeline — zoum_cluster"
+                  }
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "${{ steps.summary.outputs.overall }}"
+                  }
+                },
+                {
+                  "type": "section",
+                  "fields": [
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Repo:*\n${{ github.repository }}"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Branch:*\n`${{ github.ref_name }}`"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Image tag:*\n`${{ needs.build.outputs.image-tag }}`"
+                    },
+                    {
+                      "type": "mrkdwn",
+                      "text": "*Commit:*\n${{ github.event.head_commit.message }}"
+                    }
+                  ]
+                },
+                {
+                  "type": "section",
+                  "text": {
+                    "type": "mrkdwn",
+                    "text": "*Security gate results:*\n${{ steps.summary.outputs.gitleaks_icon }} Gitleaks (secrets)\n${{ steps.summary.outputs.checkov_icon }} Checkov (IaC)\n${{ steps.summary.outputs.sonar_icon }} SonarQube (code quality)\n${{ steps.summary.outputs.build_icon }} Docker build\n${{ steps.summary.outputs.trivy_icon }} Trivy (image CVEs)\n${{ steps.summary.outputs.manifests_icon }} Manifest update"
+                  }
+                },
+                {
+                  "type": "actions",
+                  "elements": [
+                    {
+                      "type": "button",
+                      "text": {
+                        "type": "plain_text",
+                        "text": "View pipeline run"
+                      },
+                      "url": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+                    }
+                  ]
+                }
+              ]
+            }
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_TYPE: INCOMING_WEBHOOK

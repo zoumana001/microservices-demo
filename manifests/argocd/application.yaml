@@ -1,0 +1,89 @@
+# ─────────────────────────────────────────────
+# application.yaml — ArgoCD Application
+# This is the core GitOps resource.
+# Apply this once manually to ArgoCD and it
+# takes over — watching the manifests repo and
+# syncing zoum_cluster automatically.
+#
+# Apply with:
+#   kubectl apply -f manifests/argocd/application.yaml -n argocd
+# ─────────────────────────────────────────────
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: boutique-app
+  namespace: argocd
+  labels:
+    app: boutique
+    managed-by: argocd
+
+  # Finalizer — when you delete this Application,
+  # ArgoCD also deletes all the K8s resources it
+  # deployed (deployment, services, etc.)
+  finalizers:
+    - resources-finalizer.argocd.argoproj.io
+
+spec:
+  # Which ArgoCD project this belongs to
+  # 'default' is fine for a single-team project
+  project: default
+
+  # ── Source — where to read manifests from ──
+  source:
+    # Replace with YOUR gitops-manifests repo URL
+    repoURL: https://github.com/your-github-username/gitops-manifests.git
+
+    # Branch to watch
+    targetRevision: main
+
+    # Path inside the repo where the manifests live
+    path: manifests/apps/boutique-app
+
+    # Use Kustomize to render the manifests
+    kustomize:
+      images:
+        # ArgoCD Image Updater will update this line
+        # automatically when a new image is pushed to GHCR
+        - ghcr.io/your-github-username/boutique-frontend
+
+  # ── Destination — where to deploy ──────────
+  destination:
+    # zoum_cluster API server endpoint
+    # 'https://kubernetes.default.svc' means
+    # "the cluster ArgoCD itself runs in"
+    server: https://kubernetes.default.svc
+    namespace: boutique-app
+
+  # ── Sync policy — GitOps automation ────────
+  syncPolicy:
+
+    automated:
+      # Automatically sync when the repo changes
+      prune: true      # delete resources removed from git
+      selfHeal: true   # revert manual kubectl changes
+
+    syncOptions:
+      # Create the namespace if it doesn't exist
+      - CreateNamespace=true
+      # Don't fail if the namespace already exists
+      - FailOnSharedResource=false
+      # Use server-side apply (handles large CRDs better)
+      - ServerSideApply=true
+
+    # Retry failed syncs automatically
+    retry:
+      limit: 5
+      backoff:
+        duration: 5s
+        factor: 2
+        maxDuration: 3m
+
+  # ── Health checks ───────────────────────────
+  # ArgoCD marks the app Healthy only when all
+  # deployments have their desired replicas ready
+  ignoreDifferences:
+    - group: apps
+      kind: Deployment
+      jsonPointers:
+        # Ignore HPA-managed replica count changes
+        - /spec/replicas

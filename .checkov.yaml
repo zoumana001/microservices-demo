@@ -1,0 +1,41 @@
+# .checkov.yaml
+# Place at repo root — Checkov reads this automatically
+
+# Checks to skip globally with justification
+# Add to this list only after reviewing and accepting the risk.
+skip-check:
+  # CKV_TF_1 — Terraform module source not pinned to a specific commit hash
+  # Acceptable for portfolio project using trusted public modules
+  - CKV_TF_1
+
+  # CKV2_AWS_12 — VPC flow logs not enabled
+  # Not required for this lab environment
+  - CKV2_AWS_12
+
+  # CKV_AWS_79 — EC2 instance metadata service IMDSv2 only
+  # Already enforced in our Terraform bastion module via metadata_options
+  # Checkov sometimes doesn't parse the nested block correctly
+  - CKV_AWS_79
+
+  # CKV_K8S_43 — Image tag should not be latest
+  # We use latest as a fallback; specific SHAs are used in prod GitOps
+  - CKV_K8S_43
+
+# Severity threshold — only fail on HIGH and CRITICAL
+check:
+  - HIGH
+  - CRITICAL
+
+# Output formats
+output:
+  - cli
+  - sarif
+
+# Directories to scan
+directory:
+  - terraform/
+  - manifests/
+
+# Files to scan individually
+file:
+  - Dockerfile

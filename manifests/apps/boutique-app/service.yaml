@@ -1,0 +1,187 @@
+# ─────────────────────────────────────────────
+# service.yaml — Online Boutique
+# Defines K8s Services for every microservice.
+# Services give each microservice a stable DNS
+# name inside the cluster so pods can find each
+# other by name (e.g. "cartservice:7070").
+# ─────────────────────────────────────────────
+
+# ── Frontend ────────────────────────────────
+# ClusterIP — internal only.
+# The Gateway (Phase 4) routes external traffic
+# to this service via HTTPRoute.
+apiVersion: v1
+kind: Service
+metadata:
+  name: frontend
+  namespace: boutique-app
+  labels:
+    app: frontend
+spec:
+  type: ClusterIP
+  selector:
+    app: frontend
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+
+---
+# ── Cart service ─────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: cartservice
+  namespace: boutique-app
+spec:
+  type: ClusterIP
+  selector:
+    app: cartservice
+  ports:
+    - name: grpc
+      port: 7070
+      targetPort: 7070
+
+---
+# ── Product catalog ──────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: productcatalogservice
+  namespace: boutique-app
+spec:
+  type: ClusterIP
+  selector:
+    app: productcatalogservice
+  ports:
+    - name: grpc
+      port: 3550
+      targetPort: 3550
+
+---
+# ── Currency service ─────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: currencyservice
+  namespace: boutique-app
+spec:
+  type: ClusterIP
+  selector:
+    app: currencyservice
+  ports:
+    - name: grpc
+      port: 7000
+      targetPort: 7000
+
+---
+# ── Shipping service ─────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: shippingservice
+  namespace: boutique-app
+spec:
+  type: ClusterIP
+  selector:
+    app: shippingservice
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: 50051
+
+---
+# ── Checkout service ─────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: checkoutservice
+  namespace: boutique-app
+spec:
+  type: ClusterIP
+  selector:
+    app: checkoutservice
+  ports:
+    - name: grpc
+      port: 5050
+      targetPort: 5050
+
+---
+# ── Recommendation service ───────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: recommendationservice
+  namespace: boutique-app
+spec:
+  type: ClusterIP
+  selector:
+    app: recommendationservice
+  ports:
+    - name: http
+      port: 8080
+      targetPort: 8080
+
+---
+# ── Ad service ───────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: adservice
+  namespace: boutique-app
+spec:
+  type: ClusterIP
+  selector:
+    app: adservice
+  ports:
+    - name: grpc
+      port: 9555
+      targetPort: 9555
+
+---
+# ── Email service ────────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: emailservice
+  namespace: boutique-app
+spec:
+  type: ClusterIP
+  selector:
+    app: emailservice
+  ports:
+    - name: grpc
+      port: 5000
+      targetPort: 8080
+
+---
+# ── Payment service ──────────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: paymentservice
+  namespace: boutique-app
+spec:
+  type: ClusterIP
+  selector:
+    app: paymentservice
+  ports:
+    - name: grpc
+      port: 50051
+      targetPort: 50051
+
+---
+# ── Redis (cart storage) ─────────────────────
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-cart
+  namespace: boutique-app
+spec:
+  type: ClusterIP
+  selector:
+    app: redis-cart
+  ports:
+    - name: redis
+      port: 6379
+      targetPort: 6379

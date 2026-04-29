@@ -1,0 +1,52 @@
+# .gitleaks.toml
+# Place at repo root — Gitleaks reads this automatically
+
+title = "Zoum GitOps — Gitleaks config"
+
+[extend]
+# Use the default ruleset as a base and extend it
+useDefault = true
+
+# ─────────────────────────────────────────────
+# Custom rules on top of the defaults
+# ─────────────────────────────────────────────
+[[rules]]
+  id          = "aws-account-id"
+  description = "AWS account ID exposed"
+  regex       = '''(\b\d{12}\b)'''
+  tags        = ["aws", "account"]
+  [rules.allowlist]
+    description = "Allow known non-sensitive account IDs in docs"
+    regexes     = ['''123456789012''']  # placeholder IDs used in docs
+
+[[rules]]
+  id          = "kubeconfig-token"
+  description = "Kubernetes token in kubeconfig"
+  regex       = '''token:\s+[A-Za-z0-9\-_.]{20,}'''
+  tags        = ["kubernetes", "token"]
+
+# ─────────────────────────────────────────────
+# Global allowlist — files and patterns to skip
+# ─────────────────────────────────────────────
+[allowlist]
+  description = "Global allowlist"
+  paths = [
+    '''\.gitleaks\.toml''',
+    '''go\.sum''',              # go.sum hashes look like secrets but aren't
+    '''package-lock\.json''',
+    '''\.terraform\.lock\.hcl''',
+  ]
+  regexes = [
+    # Terraform example values in docs
+    '''arn:aws:iam::ACCOUNT_ID:''',
+    # Placeholder values
+    '''your-github-username''',
+    '''<your-.*>''',
+  ]
+  commits = []
+  stopwords = [
+    "example",
+    "placeholder",
+    "changeme",
+    "REPLACE_ME",
+  ]

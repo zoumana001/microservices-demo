@@ -1,44 +1,63 @@
-# Copyright 2020 Google LLC
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
+# ─────────────────────────────────────────────
+# Dockerfile — Online Boutique frontend (Go)
+# Place this at: src/frontend/Dockerfile
+# It REPLACES Google's original Dockerfile.
+# ─────────────────────────────────────────────
 
-# Define a default value so it's not empty if the builder fails to provide it
-ARG BUILDPLATFORM=linux/amd64
+# Stage 1 — Build
+# Use the official Go image to compile the binary.
+# This stage is thrown away after build — it never
+# ends up in the final image.
+FROM golang:1.22-alpine AS builder
 
-FROM --platform=$BUILDPLATFORM golang:1.26.2-alpine@sha256:f85330846cde1e57ca9ec309382da3b8e6ae3ab943d2739500e08c86393a21b1 AS builder
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
-WORKDIR /src
+# Install git (needed for go mod download)
+RUN apk add --no-cache git ca-certificates
 
-# restore dependencies
+WORKDIR /app
+
+# Copy dependency files first — Docker caches this
+# layer and skips re-downloading if go.mod/go.sum
+# haven't changed. Big speed win on subsequent builds.
 COPY go.mod go.sum ./
 RUN go mod download
+
+# Copy the rest of the source code
 COPY . .
 
-# Skaffold passes in debug-oriented compiler flags
-ARG SKAFFOLD_GO_GCFLAGS
-RUN GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -ldflags="-s -w" -gcflags="${SKAFFOLD_GO_GCFLAGS}" -o /go/bin/frontend .
+# Build a statically linked binary
+# CGO_ENABLED=0  — no C library dependency
+# -w -s          — strip debug info (smaller binary)
+# GOOS=linux     — target OS
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+    go build \
+    -ldflags="-w -s" \
+    -o /app/frontend \
+    ./main.go
 
-FROM gcr.io/distroless/static
-WORKDIR /src
-COPY --from=builder /go/bin/frontend /src/server
-COPY ./templates ./templates
-COPY ./static ./static
+# ─────────────────────────────────────────────
+# Stage 2 — Runtime
+# distroless has NO shell, NO package manager,
+# NO OS tools. Trivy finds near-zero CVEs here.
+# This is your talking point for the LinkedIn post.
+# ─────────────────────────────────────────────
+FROM gcr.io/distroless/base-debian12:nonroot
 
-# Definition of this variable is used by 'skaffold debug' to identify a golang binary.
-# Default behavior - a failure prints a stack trace for the current goroutine.
-# See https://golang.org/pkg/runtime/
-ENV GOTRACEBACK=single
+# Copy ONLY the compiled binary from stage 1
+COPY --from=builder /app/frontend /frontend
 
+# Copy static assets (templates, images, CSS)
+# The frontend serves these at runtime
+COPY --from=builder /app/templates /templates
+COPY --from=builder /app/static    /static
+
+# nonroot = uid 65532 — never run as root
+USER 65532:65532
+
+# Port the frontend listens on
 EXPOSE 8080
-ENTRYPOINT ["/src/server"]
+
+# Health check — used by Kubernetes liveness probe
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+  CMD ["/frontend", "-health_check"]
+
+ENTRYPOINT ["/frontend"]
