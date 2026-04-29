@@ -220,11 +220,11 @@ jobs:
             type=sha,prefix=${{ github.ref_name }}-,format=short
             type=raw,value=latest,enable=${{ github.ref_name == 'main' }}
 
-      - name: Build and push image to GHCR
+      - name: Build and push image
         id: push
         uses: docker/build-push-action@v5
         with:
-          context: ./src/frontend
+          context: ./src/frontend      # ← build context is the frontend folder
           file: ./src/frontend/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
           tags: ${{ steps.meta.outputs.tags }}
@@ -232,9 +232,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
           platforms: linux/amd64
-          provenance: true    # generate SLSA provenance attestation
-          sbom: true          # generate SBOM (Software Bill of Materials)
-
+          provenance: true
+          sbom: true
   # ═══════════════════════════════════════════════════════════════
   # STAGE 5 — Trivy: container image vulnerability scan
   # Scans the BUILT image (not just the Dockerfile) for:
