@@ -237,7 +237,7 @@ jobs:
   # ═══════════════════════════════════════════════════════════════
   # STAGE 5 — Trivy: container image vulnerability scan
   # Scans the BUILT image (not just the Dockerfile) for:
-  #   - OS package CVEs (Alpine, Debian, Ubuntu)
+  #   - OS package CVEs (Alpine, Debian, Ubuntu
   #   - Application dependency CVEs (Go modules, npm, pip)
   #   - Misconfigurations in the image layer
   #   - Exposed secrets baked into layers
