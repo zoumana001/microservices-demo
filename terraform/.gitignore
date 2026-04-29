@@ -6,6 +6,9 @@
 .project
 .skaffold-*.yaml
 .terraform.lock.hcl
+*.tfstate.backup
+.terraform/
+*.tfstate
 .terraform/*
 .venv/
 .vs/
