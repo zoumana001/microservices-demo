@@ -1,35 +1,29 @@
-# ─────────────────────────────────────────────
-# Stage 1 — Build
-# ─────────────────────────────────────────────
+# src/frontend/Dockerfile
 FROM golang:1.25-alpine AS builder
 
 RUN apk add --no-cache git ca-certificates gcc musl-dev
 
 WORKDIR /app
 
-# Copy the entire frontend source firs
-# (Online Boutique frontend has its go.mod her
-COPY . . 
+COPY . .
 
-# Download dependencies
 RUN go mod download
- 
-# Build the binary
+
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
-    go build \
-    -ldflags="-w -s" \
-    -o /app/frontend \ 
-    .
+    go build -ldflags="-w -s" -o /app/frontend .
 
 # ─────────────────────────────────────────────
-# Stage 2 — Runtime  
-# ─────────────────────────────────────────────
-FROM gcr.io/distroless/base-debian12:nonroot
+FROM golang:1.25-alpine
 
-COPY --from=builder /app/frontend  /frontend
-COPY --from=builder /app/templates /templates
-COPY --from=builder /app/static    /static
+WORKDIR /app
 
-USER 65532:65532
+# Copy binary
+COPY --from=builder /app/frontend .
+
+# Copy templates and static files — these MUST exist at runtime
+COPY --from=builder /app/templates ./templates
+COPY --from=builder /app/static    ./static
+
+USER nobody
 EXPOSE 8080
-ENTRYPOINT ["/frontend"]
+ENTRYPOINT ["/app/frontend"]
