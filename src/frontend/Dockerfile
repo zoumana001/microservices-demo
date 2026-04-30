@@ -3,7 +3,7 @@ RUN apk add --no-cache git ca-certificates gcc musl-dev
 WORKDIR /app
 COPY . .
 RUN go mod download
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \ 
     go build -ldflags="-w -s" -o frontend .
 
 FROM alpine:3.19
