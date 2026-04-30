@@ -260,10 +260,10 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GHCR_TOKEN }}
 
-      # Full vulnerability scan — fails on CRITICAL/HIGH
-      - name: Trivy — vulnerability scan (SARIF)
+      # Vulnerability scan
+      - name: Trivy — vulnerability scan
         uses: aquasecurity/trivy-action@master
-        with: 
+        with:
           image-ref:      ${{ needs.build.outputs.full-image }}
           format:         sarif
           output:         trivy-vuln.sarif
@@ -271,19 +271,21 @@ jobs:
           exit-code:      '1'
           ignore-unfixed: true
           vuln-type:      os,library
+        continue-on-error: true    # ← allow secret scan to still run
 
-      # Also scan for secrets baked into image layers
-      - name: Trivy — secret scan inside image
+      # Secret scan — separate step, separate output file
+      - name: Trivy — secret scan
         uses: aquasecurity/trivy-action@master
         with:
-          image-ref:  ${{ needs.build.outputs.full-image }}
-          format:     sarif
-          output:     trivy-secret.sarif
-          scanners:   secret
-          exit-code:  '1'
+          image-ref:   ${{ needs.build.outputs.full-image }}
+          format:      sarif
+          output:      trivy-secret.sarif
+          scanners:    secret
+          exit-code:   '1'
+        continue-on-error: true    # ← allow upload to still run
 
-      # Human-readable table in the Actions log
-      - name: Trivy — table output for logs
+      # Table output for logs
+      - name: Trivy — table output
         uses: aquasecurity/trivy-action@master
         if: always()
         with:
@@ -291,6 +293,13 @@ jobs:
           format:         table
           severity:       CRITICAL,HIGH
           ignore-unfixed: true
+
+      # Ensure SARIF files exist before uploading
+      - name: Ensure SARIF files exist
+        if: always()
+        run: |
+          [ -f trivy-vuln.sarif ]   || echo '{"version":"2.1.0","runs":[]}' > trivy-vuln.sarif
+          [ -f trivy-secret.sarif ] || echo '{"version":"2.1.0","runs":[]}' > trivy-secret.sarif
 
       - name: Upload Trivy vulnerability SARIF
         uses: github/codeql-action/upload-sarif@v4
@@ -305,6 +314,41 @@ jobs:
         with:
           sarif_file: trivy-secret.sarif
           category:   trivy-secrets
+
+      # Fail the job if either scan found issues
+      - name: Fail if vulnerabilities found
+        if: always()
+        run: |
+          VULN_EXIT=0
+          SECRET_EXIT=0
+
+          # Check vuln scan result
+          python3 -c "
+          import json, sys
+          with open('trivy-vuln.sarif') as f:
+              data = json.load(f)
+          runs = data.get('runs', [])
+          total = sum(len(r.get('results', [])) for r in runs)
+          print(f'Vulnerabilities found: {total}')
+          sys.exit(1 if total > 0 else 0)
+          " || VULN_EXIT=1
+
+          # Check secret scan result
+          python3 -c "
+          import json, sys
+          with open('trivy-secret.sarif') as f:
+              data = json.load(f)
+          runs = data.get('runs', [])
+          total = sum(len(r.get('results', [])) for r in runs)
+          print(f'Secrets found: {total}')
+          sys.exit(1 if total > 0 else 0)
+          " || SECRET_EXIT=1
+
+          if [ $VULN_EXIT -ne 0 ] || [ $SECRET_EXIT -ne 0 ]; then
+            echo "Trivy found issues — blocking deployment"
+            exit 1
+          fi
+          echo "Trivy scan passed — no issues found"
 
   # ═══════════════════════════════════════════════════════════════
   # STAGE 6 + 7 — Update manifests repo
