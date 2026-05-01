@@ -1,0 +1,50 @@
+kubectl apply -f - <<'EOF'
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: zoum-cluster-alerts
+  namespace: monitoring
+  labels:
+    release: kube-prometheus-stack
+spec:
+  groups:
+    - name: boutique-app
+      interval: 30s
+      rules:
+        - alert: FrontendPodDown
+          expr: |
+            kube_deployment_status_replicas_available{
+              namespace="boutique-app",
+              deployment="frontend"
+            } < 1
+          for: 1m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Frontend pod is down"
+            description: "Online Boutique frontend has 0 replicas available."
+
+        - alert: PodCrashLooping
+          expr: |
+            increase(kube_pod_container_status_restarts_total{
+              namespace="boutique-app"
+            }[15m]) > 3
+          for: 5m
+          labels:
+            severity: critical
+          annotations:
+            summary: "Pod is crash looping"
+            description: "Pod {{ $labels.pod }} restarted {{ $value }} times in 15 min."
+
+        - alert: HighMemoryUsage
+          expr: |
+            sum(container_memory_working_set_bytes{
+              namespace="boutique-app",container!=""
+            }) by (pod) > 500 * 1024 * 1024
+          for: 5m
+          labels:
+            severity: warning
+          annotations:
+            summary: "High memory in boutique-app"
+            description: "Pod {{ $labels.pod }} using more than 500Mi."
+EOF

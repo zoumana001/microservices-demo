@@ -1,0 +1,57 @@
+# kube-prometheus-stack Helm values
+# Install with:
+#   helm install kube-prometheus-stack \
+#     prometheus-community/kube-prometheus-stack \
+#     --namespace monitoring \
+#     --version 61.3.2 \
+#     -f monitoring/values.yaml
+
+prometheus:
+  prometheusSpec:
+    retention: 7d
+    resources:
+      requests:
+        memory: 512Mi
+        cpu: 250m
+      limits:
+        memory: 1Gi
+    storageSpec:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp2
+          resources:
+            requests:
+              storage: 10Gi
+
+grafana:
+  adminPassword: ZoumGrafana2024!
+  resources:
+    requests:
+      memory: 256Mi
+      cpu: 100m
+    limits:
+      memory: 512Mi
+  persistence:
+    enabled: true
+    storageClassName: gp2
+    size: 5Gi
+  grafana.ini:
+    server:
+      root_url: https://grafana.zoumanas.com
+      serve_from_sub_path: false
+
+alertmanager:
+  alertmanagerSpec:
+    storage:
+      volumeClaimTemplate:
+        spec:
+          storageClassName: gp2
+          resources:
+            requests:
+              storage: 5Gi
+
+nodeExporter:
+  enabled: true
+
+kubeStateMetrics:
+  enabled: true
