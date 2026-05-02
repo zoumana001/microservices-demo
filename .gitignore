@@ -30,3 +30,7 @@ pkg/
 release/wi-kubernetes-manifests.yaml
 vendor/
 zoum-bastion-key.pem
+# IAM policy JSON files — apply manually, never commit
+*-trust.json
+*-policy.json
+*-policy-new.json
